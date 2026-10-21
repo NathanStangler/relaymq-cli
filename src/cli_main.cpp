@@ -15,15 +15,21 @@ struct CliArgs {
     std::string host = "127.0.0.1";
     uint16_t port = 9000;
     std::string token;
+    int timeout_ms = 3000;
+    bool show_help = false;
 };
 
 static void print_usage() {
     std::cout << "RelayMQ CLI\n\n"
               << "Usage:\n"
-              << "  relay-cli pub <subject> <payload> [host:port] [--token <tok>]   Publish a message\n"
-              << "  relay-cli sub <subject> [host:port] [--token <tok>]             Subscribe and listen for messages\n"
-              << "  relay-cli req <subject> <payload> [host:port] [--token <tok>]   Request-reply\n"
-              << "  relay-cli ping [host:port] [--token <tok>]                      Ping the broker and measure latency\n\n"
+              << "  relay-cli pub <subject> <payload> [host:port] [--token <tok>]                  Publish a message\n"
+              << "  relay-cli sub <subject> [host:port] [--token <tok>]                            Subscribe and listen for messages\n"
+              << "  relay-cli req <subject> <payload> [host:port] [--token <tok>] [--timeout <ms>] Request-reply\n"
+              << "  relay-cli ping [host:port] [--token <tok>] [--timeout <ms>]                    Ping the broker and measure latency\n\n"
+              << "Options:\n"
+              << "  --token <token> Authentication bearer token\n"
+              << "  --timeout <ms>  Timeout in milliseconds\n"
+              << "  --help          Display this help message\n\n"
               << "Defaults: host = 127.0.0.1, port = 9000\n";
 }
 
@@ -36,13 +42,33 @@ static bool parse_cli_args(int argc, char* argv[], CliArgs& args) {
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--help") {
-            print_usage();
-            return false;
+            args.show_help = true;
+            return true;
         }
-        if (arg == "--token" && i + 1 < argc) {
-            i++;
-            args.token = argv[i];
-            continue;
+        if (arg == "--token") {
+            if (i + 1 < argc) {
+                i++;
+                args.token = argv[i];
+                continue;
+            } else {
+                std::cerr << "Error: --token requires an argument\n";
+                return false;
+            }
+        }
+        if (arg == "--timeout") {
+            if (i + 1 < argc) {
+                i++;
+                try {
+                    args.timeout_ms = std::stoi(argv[i]);
+                } catch (...) {
+                    std::cerr << "Error: invalid timeout value: " << argv[i] << "\n";
+                    return false;
+                }
+                continue;
+            } else {
+                std::cerr << "Error: --timeout requires an argument\n";
+                return false;
+            }
         }
         command_args.push_back(std::move(arg));
     }
@@ -209,7 +235,11 @@ static int handle_sub(const CliArgs& args) {
     sig_thread.detach();
 
     std::string sid = client.subscribe(args.subject, [](const relaymq::Message& msg) {
-        std::cout << "[" << msg.subject << "] " << msg.payload << "\n";
+        if (msg.reply_to.empty()) {
+            std::cout << "[" << msg.subject << "] " << msg.payload << "\n";
+        } else {
+            std::cout << "[" << msg.subject << "] (reply-to: " << msg.reply_to << ") " << msg.payload << "\n";
+        }
     });
 
     if (sid.empty()) {
@@ -252,7 +282,7 @@ static int handle_req(const CliArgs& args) {
         return 1;
     }
 
-    std::optional<relaymq::Message> reply = client.request(args.subject, args.payload, 3000);
+    std::optional<relaymq::Message> reply = client.request(args.subject, args.payload, args.timeout_ms);
     if (reply.has_value()) {
         std::cout << "[REPLY] " << reply->payload << "\n";
         client.disconnect();
@@ -279,7 +309,7 @@ static int handle_ping(const CliArgs& args) {
         return 1;
     }
 
-    int64_t latency = client.ping();
+    int64_t latency = client.ping(args.timeout_ms);
     if (latency >= 0) {
         std::cout << "[PONG] Latency: " << (static_cast<double>(latency) / 1000.0) << " ms\n";
     } else {
@@ -292,8 +322,15 @@ static int handle_ping(const CliArgs& args) {
 int main(int argc, char* argv[]) {
     CliArgs args;
     if (!parse_cli_args(argc, argv, args)) {
-        print_usage();
+        if (argc < 2) {
+            print_usage();
+        }
         return 1;
+    }
+
+    if (args.show_help) {
+        print_usage();
+        return 0;
     }
 
     if (args.mode == "pub") {

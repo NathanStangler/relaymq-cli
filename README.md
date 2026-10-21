@@ -21,10 +21,10 @@ cmake --build build -j
 ./build/relay-cli sub <subject> [host:port] [--token <tok>]
 
 # Request-reply RPC
-./build/relay-cli req <subject> <payload> [host:port] [--token <tok>]
+./build/relay-cli req <subject> <payload> [host:port] [--token <tok>] [--timeout <ms>]
 
 # Ping broker and measure latency
-./build/relay-cli ping [host:port] [--token <tok>]
+./build/relay-cli ping [host:port] [--token <tok>] [--timeout <ms>]
 ```
 
 Defaults: `host = 127.0.0.1`, `port = 9000`.
